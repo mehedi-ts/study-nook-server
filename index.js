@@ -22,9 +22,16 @@ const run = async () => {
 
     const db = client.db("studyNook");
     const roomCollection = db.collection("rooms");
+    const BookingCollection = db.collection("booking");
     app.post("/all-rooms", async (req, res) => {
       const newRoom = req.body;
       const result = await roomCollection.insertOne(newRoom);
+      res.send(result);
+    });
+    app.post("/booking", async (req, res) => {
+      const newbooking = req.body;
+      console.log(newbooking);
+      const result = await BookingCollection.insertOne(newbooking);
       res.send(result);
     });
     app.get("/all-rooms", async (req, res) => {
