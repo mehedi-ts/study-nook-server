@@ -34,6 +34,14 @@ const run = async () => {
       const result = await BookingCollection.insertOne(newbooking);
       res.send(result);
     });
+    app.get("/bookings/user/:userId", async (req, res) => {
+      const userId = req.params.userId;
+      const query = {
+        userId: userId,
+      };
+      const result = await BookingCollection.find(query).toArray();
+      res.send(result);
+    });
     app.get("/all-rooms", async (req, res) => {
       const cursor = roomCollection.find();
       const result = await cursor.toArray();
@@ -45,7 +53,44 @@ const run = async () => {
         _id: new ObjectId(id),
       };
       const result = await roomCollection.findOne(query);
+      if (!result) {
+        return res.status(404).json({ message: "Room not found" });
+      }
       res.send(result);
+    });
+    app.delete("/all-rooms/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const result = await roomCollection.deleteOne(filter);
+
+      res.send(result);
+    });
+    app.patch("/all-rooms/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updatedData = req.body;
+
+        const filter = { _id: new ObjectId(id) };
+
+        const updateDoc = {
+          $set: {
+            roomName: updatedData.roomName,
+            description: updatedData.description,
+            image: updatedData.image,
+            floor: updatedData.floor,
+            capacity: updatedData.capacity,
+            hourlyRate: updatedData.hourlyRate,
+            amenities: updatedData.amenities,
+          },
+        };
+
+        const result = await roomCollection.updateOne(filter, updateDoc);
+
+        res.send(result);
+      } catch (error) {
+        console.error("PATCH ERROR:", error);
+        res.status(500).send({ success: false, message: "Update failed" });
+      }
     });
 
     await client.db("admin").command({ ping: 1 });
