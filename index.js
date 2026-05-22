@@ -32,6 +32,10 @@ const verifyToken = async (req, res, next) => {
   try {
     const { payload } = await jwtVerify(token, JWKS);
     console.log(payload);
+    req.user = {
+      id: payload.sub,
+      email: payload.email,
+    };
     next();
   } catch (error) {
     return res.status(403).json({ message: "Forbidden" });
@@ -106,7 +110,6 @@ const run = async () => {
 
         const filter = { _id: new ObjectId(id) };
 
-        // check if booking exists
         const booking = await BookingCollection.findOne(filter);
 
         if (!booking) {
@@ -116,7 +119,13 @@ const run = async () => {
           });
         }
 
-        // already cancelled check
+        if (booking.userId !== req.user?.id) {
+          return res.status(403).send({
+            success: false,
+            message: "You are not allowed to cancel this booking",
+          });
+        }
+
         if (booking.status === false) {
           return res.status(400).send({
             success: false,
@@ -124,7 +133,6 @@ const run = async () => {
           });
         }
 
-        // update status -> false
         const result = await BookingCollection.updateOne(filter, {
           $set: { status: false },
         });
@@ -224,11 +232,47 @@ const run = async () => {
       res.send(result);
     });
     app.delete("/all-rooms/:id", verifyToken, async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const result = await roomCollection.deleteOne(filter);
+      try {
+        const id = req.params.id;
 
-      res.send(result);
+        const room = await roomCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!room) {
+          return res.status(404).send({
+            success: false,
+            message: "Room not found",
+          });
+        }
+
+        if (room.userId !== req.user?.id) {
+          return res.status(403).send({
+            success: false,
+            message: "You are not allowed to delete this room",
+          });
+        }
+
+        await BookingCollection.deleteMany({
+          roomId: id,
+        });
+
+        const result = await roomCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        return res.status(200).send({
+          success: true,
+          message: "Room deleted successfully",
+          deletedCount: result.deletedCount,
+        });
+      } catch (error) {
+        console.error(error);
+        return res.status(500).send({
+          success: false,
+          message: "Server error",
+        });
+      }
     });
     app.patch("/all-rooms/:id", verifyToken, async (req, res) => {
       try {
