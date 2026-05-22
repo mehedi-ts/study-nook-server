@@ -100,6 +100,48 @@ const run = async () => {
         result,
       });
     });
+    app.patch("/booking/cancel/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const filter = { _id: new ObjectId(id) };
+
+        // check if booking exists
+        const booking = await BookingCollection.findOne(filter);
+
+        if (!booking) {
+          return res.status(404).send({
+            success: false,
+            message: "Booking not found",
+          });
+        }
+
+        // already cancelled check
+        if (booking.status === false) {
+          return res.status(400).send({
+            success: false,
+            message: "Booking already cancelled",
+          });
+        }
+
+        // update status -> false
+        const result = await BookingCollection.updateOne(filter, {
+          $set: { status: false },
+        });
+
+        res.send({
+          success: true,
+          message: "Booking cancelled successfully",
+          result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Server error",
+        });
+      }
+    });
     app.get("/bookings/user/:userId", verifyToken, async (req, res) => {
       const userId = req.params.userId;
       const query = {
@@ -237,7 +279,7 @@ const run = async () => {
 };
 
 app.get("/", (req, res) => {
-  res.send("hello from server");
+  res.send("hello from server2");
 });
 run().catch(console.dir);
 app.listen(PORT, () => {
