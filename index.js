@@ -3,6 +3,7 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const dotenv = require("dotenv");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 app.use(cors());
 app.use(express.json());
 dotenv.config();
@@ -15,10 +16,31 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
+const verifyToken = async (req, res, next) => {
+  const authHeader = req?.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    console.log(payload);
+    next();
+  } catch (error) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+};
 
 const run = async () => {
   try {
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("studyNook");
     const roomCollection = db.collection("rooms");
@@ -28,13 +50,57 @@ const run = async () => {
       const result = await roomCollection.insertOne(newRoom);
       res.send(result);
     });
-    app.post("/booking", async (req, res) => {
+    app.post("/booking", verifyToken, async (req, res) => {
       const newbooking = req.body;
-      console.log(newbooking);
+
+      const { roomId, date, startTime, endTime } = newbooking;
+
+      const conflict = await BookingCollection.findOne({
+        roomId,
+        date,
+        $or: [
+          {
+            startTime: { $lt: endTime },
+            endTime: { $gt: startTime },
+          },
+        ],
+      });
+
+      if (conflict) {
+        return res.status(400).send({
+          success: false,
+          message: "This time slot is already booked",
+        });
+      }
+
       const result = await BookingCollection.insertOne(newbooking);
-      res.send(result);
+      res.send({
+        success: true,
+        message: "Room booked successfully",
+        result,
+      });
     });
-    app.get("/bookings/user/:userId", async (req, res) => {
+    app.delete("/booking/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      const result = await BookingCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Booking not found",
+        });
+      }
+
+      res.send({
+        success: true,
+        message: "Booking deleted successfully",
+        result,
+      });
+    });
+    app.get("/bookings/user/:userId", verifyToken, async (req, res) => {
       const userId = req.params.userId;
       const query = {
         userId: userId,
@@ -42,12 +108,69 @@ const run = async () => {
       const result = await BookingCollection.find(query).toArray();
       res.send(result);
     });
-    app.get("/all-rooms", async (req, res) => {
-      const cursor = roomCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
+    app.get("/booking-count/:roomId", verifyToken, async (req, res) => {
+      const roomId = req.params.roomId;
+
+      const count = await BookingCollection.countDocuments({
+        roomId: roomId,
+      });
+
+      res.send({ count });
     });
-    app.get("/all-rooms/:id", async (req, res) => {
+    app.get("/all-rooms", async (req, res) => {
+      try {
+        const { search, amenities } = req.query;
+
+        const query = {};
+
+        // SEARCH
+        if (search) {
+          query.roomName = {
+            $regex: search,
+            $options: "i",
+          };
+        }
+
+        // AMENITIES FILTER
+        if (amenities) {
+          const amenitiesArray = amenities
+            .split(",")
+            .map((item) => item.trim());
+
+          query.amenities = {
+            $elemMatch: {
+              $in: amenitiesArray,
+            },
+          };
+        }
+
+        const result = await roomCollection.find(query).toArray();
+
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch rooms",
+        });
+      }
+    });
+    app.get("/latest-rooms", async (req, res) => {
+      try {
+        const rooms = await roomCollection
+          .find()
+          .sort({ _id: -1 })
+          .limit(6)
+          .toArray();
+
+        res.send(rooms);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch rooms" });
+      }
+    });
+
+    app.get("/all-rooms/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const query = {
         _id: new ObjectId(id),
@@ -58,14 +181,14 @@ const run = async () => {
       }
       res.send(result);
     });
-    app.delete("/all-rooms/:id", async (req, res) => {
+    app.delete("/all-rooms/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
       const result = await roomCollection.deleteOne(filter);
 
       res.send(result);
     });
-    app.patch("/all-rooms/:id", async (req, res) => {
+    app.patch("/all-rooms/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
@@ -92,8 +215,19 @@ const run = async () => {
         res.status(500).send({ success: false, message: "Update failed" });
       }
     });
+    app.get("/my-rooms/:userId", verifyToken, async (req, res) => {
+      const userId = req.params.userId;
 
-    await client.db("admin").command({ ping: 1 });
+      const rooms = await roomCollection
+        .find({
+          userId: userId,
+        })
+        .toArray();
+
+      res.send(rooms);
+    });
+
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
